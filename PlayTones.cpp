@@ -91,6 +91,48 @@ void getgamepadstate()
             (gp.buttons & io::GamePadState::Button::START ? START : 0) |
             0;
     auto pushed = v & ~prevButtons;
+    if (pushed)
+    {
+        if (pushed & A)
+        {
+            phase_incr_main = (263.0 * two32) / Fs;  // DO
+        }
+        else if (pushed & B)
+        {
+            phase_incr_main = (294.0 * two32) / Fs;  // RE
+        }
+        else if (pushed & UP)
+        {
+            phase_incr_main = ( 330.0 * two32) / Fs;  // MI
+        }
+        else if (pushed & DOWN)
+        {
+            phase_incr_main = (349.0 * two32) / Fs; // FA
+        }
+    }
+    if (pushed & LEFT)
+    {
+        phase_incr_main = (392.0 * two32) / Fs; // SOL
+    }
+    else if (pushed & RIGHT)
+    {
+        phase_incr_main = (440.0 * two32) / Fs; // LA
+    }
+    if (pushed & SELECT)
+    {
+        phase_incr_main = (494.0 * two32) / Fs; // SI
+    }
+    else if (pushed & START)
+    {
+        phase_incr_main = (523.0 * two32) / Fs; // DO
+    } else {
+        phase_incr_main = 0;
+    }
+   
+    // if (pushed)
+    // {
+    //     printf("phase_incr_main = %f\n", phase_incr_main * Fs / two32);
+    // }
 }
 int main()
 {
