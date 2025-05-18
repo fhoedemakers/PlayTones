@@ -561,8 +561,8 @@ int main()
             triangle_table[ii] = (int)(2047 - ((ii - sine_table_size / 2) * (4094.0 / (sine_table_size / 2))));
     }
     // wait for keypress
-    printf("Press any key to start\n");
-    char c = getchar();
+    // printf("Press any key to start\n");
+    // char c = getchar();
     printf("Starting...\n");
     
     // play_byte_stream((const uint8_t*)sound, sound_len, 44100);
