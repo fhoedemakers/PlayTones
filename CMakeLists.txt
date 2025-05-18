@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(PlayTones PlayTones.cpp gamepad.cpp hid_app.cpp )
+add_executable(PlayTones PlayTones.cpp gamepad.cpp hid_app.cpp sound.c )
 
 pico_set_program_name(PlayTones "PlayTones")
 pico_set_program_version(PlayTones "0.1")

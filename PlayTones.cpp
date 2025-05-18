@@ -32,12 +32,13 @@ typedef unsigned long DWORD;
 #endif /* !DWORD */
 // Low-level alarm infrastructure we'll be using
 #define ALARM_NUM 0
-#define ALARM_IRQ TIMER_IRQ_0
+#define ALARM_IRQ timer_hardware_alarm_get_irq_num(timer_hw, ALARM_NUM)
+
 
 // DDS parameters
 #define two32 4294967296.0 // 2^32
-#define Fs 50000
-#define DELAY 20 // 1/Fs (in microseconds): dus 20 microseconds * 50000 = 1 seconde
+#define Fs 44100 // 50000
+#define DELAY 23 // 20 // 1/Fs (in microseconds): dus 20 microseconds * 50000 = 1 seconde
 // the DDS units:
 volatile unsigned int phase_accum_main;
 volatile unsigned int phase_incr_main = (0.0 * two32) / Fs; // was 800.0
@@ -148,6 +149,46 @@ static void alarm_irq(void)
 
 
     // De-assert the GPIO when we leave the interrupt
+    gpio_put(ISR_GPIO, 0);
+}
+
+volatile const uint8_t* audio_stream = NULL;
+volatile size_t audio_stream_len = 0;
+volatile size_t audio_stream_idx = 0;
+volatile bool audio_stream_playing = false;
+
+// --- Call this to start playback ---
+void start_audio_stream(const uint8_t* data, size_t length) {
+    audio_stream = data;
+    audio_stream_len = length;
+    audio_stream_idx = 0;
+    audio_stream_playing = true;
+}
+
+// --- In your alarm_irq ---
+static void alarm_irq_stream(void)
+{
+    gpio_put(ISR_GPIO, 1);
+    hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
+    timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY;
+
+    if (audio_stream_playing && audio_stream && audio_stream_idx < audio_stream_len) {
+        // 8-bit unsigned PCM, map 0–255 to 0–4095
+        int dac_value = (audio_stream[audio_stream_idx] * 4095) / 255;
+        DAC_data = (DAC_config_chan_A | (dac_value & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        DAC_data = (DAC_config_chan_B | (dac_value & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        audio_stream_idx++;
+        if (audio_stream_idx >= audio_stream_len) {
+            audio_stream_playing = false;
+            // Optionally, silence output
+            DAC_data = (DAC_config_chan_A | (2048 & 0xffff));
+            spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+            DAC_data = (DAC_config_chan_B | (2048 & 0xffff));
+            spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        }
+    }
     gpio_put(ISR_GPIO, 0);
 }
 void getgamepadstate()
@@ -433,9 +474,53 @@ void play_stereo_song_alt() {
         busy_wait_ms(80); // Short pause between notes
     }
 }
+void play_byte_stream(const uint8_t* data, size_t length, unsigned sample_rate_hz) {
+    unsigned delay_us = 1000000 / sample_rate_hz; // microseconds per sample
+    delay_us = 18;
+    printf("Playing %zu bytes at %u Hz (%u)\n", length, sample_rate_hz, delay_us);
+    const int gain = 10; // Increase for more volume, but avoid clipping
+    for (size_t i = 0; i < length; ++i) {
+        // Center at 128, scale, and re-center at 2048
+        int centered = ((int)data[i] - 128) * gain;
+        int dac_value = 2048 + centered;
+        if (dac_value < 0) dac_value = 0;
+        if (dac_value > 4095) dac_value = 4095;
+        DAC_data = (DAC_config_chan_A | (dac_value & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        DAC_data = (DAC_config_chan_B | (dac_value & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        busy_wait_us(delay_us); 
+    }
+    DAC_data = (DAC_config_chan_A | (2048 & 0xffff));
+    spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+     DAC_data = (DAC_config_chan_B | (2048 & 0xffff));
+    spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+}
+
+void play_byte_streamMax(const uint8_t* data, size_t length, unsigned sample_rate_hz) {
+    unsigned delay_us = 1000000 / sample_rate_hz; // microseconds per sample
+    for (size_t i = 0; i < length; ++i) {
+        // Map 0–255 directly to 0–4095
+        int dac_value = (data[i] * 4095) / 255;
+        DAC_data = (DAC_config_chan_A | (dac_value & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+         DAC_data = (DAC_config_chan_B | (dac_value & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        busy_wait_us(delay_us);
+    }
+    DAC_data = (DAC_config_chan_A | (2048 & 0xffff));
+    spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+    DAC_data = (DAC_config_chan_B | (2048 & 0xffff));
+    spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+}
+extern char sound[];
+extern signed int sound_len;
 int main()
 {
     stdio_init_all();
+  
+    
+
     busy_wait_ms(1000);
     printf("Play Tones Demo\n");
     printf("Init USB\n");
@@ -475,26 +560,39 @@ int main()
         else
             triangle_table[ii] = (int)(2047 - ((ii - sine_table_size / 2) * (4094.0 / (sine_table_size / 2))));
     }
-    printf("Playing song, two channels\n");
-    play_song() ;
-    printf("Playing multitone song\n");
-    play_multitone_song();
-    printf("Playing multitone stereo song\n");
-    play_multitone_stereo_song();
-    printf("Playing alternate over left and right\n");
-    play_stereo_song_alt();
+    // wait for keypress
+    printf("Press any key to start\n");
+    char c = getchar();
+    printf("Starting...\n");
     
-     printf("Press buttons to play notes\n");
+    // play_byte_stream((const uint8_t*)sound, sound_len, 44100);
+    // printf("Playing song, two channels\n");
+    // play_song() ;
+    // printf("Playing multitone song\n");
+    // play_multitone_song();
+    // printf("Playing multitone stereo song\n");
+    // play_multitone_stereo_song();
+    // printf("Playing alternate over left and right\n");
+    // play_stereo_song_alt();
+    
+     
 
     // Enable the interrupt for the alarm (we're using Alarm 0)
     hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM);
     // Associate an interrupt handler with the ALARM_IRQ
-    irq_set_exclusive_handler(ALARM_IRQ, alarm_irq);
+    irq_set_exclusive_handler(ALARM_IRQ, alarm_irq_stream);
     // Enable the alarm interrupt
     irq_set_enabled(ALARM_IRQ, true);
     // Write the lower 32 bits of the target time to the alarm register, arming it.
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY;
-
+    while(true) {
+        if ( !audio_stream_playing ) {
+            printf("Forever Playing Mario!\n");
+            start_audio_stream((const uint8_t*)sound, sound_len);
+        }
+        busy_wait_us(10);
+    }
+    printf("Press buttons to play notes\n");
     while (1)
     {
         tuh_task();
