@@ -1,3 +1,23 @@
+// Note playing demo for the Pico
+// This example uses the SPI interface to output a 16-bit signal to a DAC.
+// The DAC is a MCP4822, which has two channels.
+// The example uses a timer interrupt to generate a sine wave at a given frequency.
+// The frequency is set by the phase increment, which is calculated based on the desired frequency and the sample rate.
+// The example also includes a simple gamepad interface to change the frequency of the output signal.
+// The gamepad is connected via USB and uses the TinyUSB library.
+// Dual Shock 4 or dual sensor gamepad is supported.
+// The gamepad buttons are mapped to different frequencies.
+// The gamepad buttons are:
+//  - DOWN: DO
+//  - LEFT: RE
+//  - UP: MI
+//  - RIGHT: FA
+//  - SELECT: SOL
+//  - START: LA
+//  - B: SI
+//  - A: DO
+// The example includes a simple song that plays a series of notes using the sine wave generator.
+ 
 #include <stdio.h>
 #include <math.h>
 #include "pico/stdlib.h"
@@ -242,11 +262,15 @@ void play_song() {
                 }
                 DAC_data = (DAC_config_chan_A | ((sample + 2048) & 0xffff));
                 spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+                DAC_data = (DAC_config_chan_B | ((sample + 2048) & 0xffff));
+                spi_write16_blocking(SPI_PORT, &DAC_data, 1);
                 busy_wait_us(20); // 1/Fs = 20us
             }
         }
         // Silence between notes
         DAC_data = (DAC_config_chan_A | (2048 & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+         DAC_data = (DAC_config_chan_B | (2048 & 0xffff));
         spi_write16_blocking(SPI_PORT, &DAC_data, 1);
         busy_wait_ms(50);
     }
@@ -345,7 +369,7 @@ void play_multitone_song() {
         busy_wait_ms(100); // Short pause between chords
     }
 }
-void play_stereo_song() {
+void play_multitone_stereo_song() {
     // Each entry: left freq, left inst, right freq, right inst, duration_ms
     struct StereoNote {
         double freqL;
@@ -451,13 +475,17 @@ int main()
         else
             triangle_table[ii] = (int)(2047 - ((ii - sine_table_size / 2) * (4094.0 / (sine_table_size / 2))));
     }
+    printf("Playing song, two channels\n");
+    play_song() ;
+    printf("Playing multitone song\n");
+    play_multitone_song();
+    printf("Playing multitone stereo song\n");
+    play_multitone_stereo_song();
+    printf("Playing alternate over left and right\n");
     play_stereo_song_alt();
-    //play_multitone_stereo(NOTE_DO, INSTR_SINE, NOTE_MI, INSTR_SQUARE, 1000);
-//     play_song();
-    //play_multitone(NOTE_DO, INSTR_SINE, NOTE_MI, INSTR_SQUARE, 1000);
-   
+    
+     printf("Press buttons to play notes\n");
 
-#if true
     // Enable the interrupt for the alarm (we're using Alarm 0)
     hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM);
     // Associate an interrupt handler with the ALARM_IRQ
@@ -466,8 +494,7 @@ int main()
     irq_set_enabled(ALARM_IRQ, true);
     // Write the lower 32 bits of the target time to the alarm register, arming it.
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY;
-#endif
-    // Nothing happening here
+
     while (1)
     {
         tuh_task();
