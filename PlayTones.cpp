@@ -20,7 +20,7 @@ typedef unsigned long DWORD;
 #define DELAY 20 // 1/Fs (in microseconds): dus 20 microseconds * 50000 = 1 seconde
 // the DDS units:
 volatile unsigned int phase_accum_main;
-volatile unsigned int phase_incr_main = (800.0 * two32) / Fs; //
+volatile unsigned int phase_incr_main = (0.0 * two32) / Fs; // was 800.0
 
 // SPI data
 uint16_t DAC_data; // output value
@@ -37,14 +37,70 @@ uint16_t DAC_data; // output value
 #define PIN_SCK 6
 #define PIN_MOSI 7
 #define SPI_PORT spi0
-
+#define LDAC_GPIO 3
 // GPIO for timing the ISR
 #define ISR_GPIO 2
 
 // DDS sine table
 #define sine_table_size 256
-volatile int sin_table[sine_table_size];
+// Add instrument types
+enum Instrument {
+    INSTR_SINE,
+    INSTR_SQUARE,
+    INSTR_TRIANGLE
+};
 
+// Update Note struct to include instrument
+struct Note {
+    double freq;
+    int duration;
+    Instrument instrument;
+};
+
+// Three lookup tables: sine, square, triangle
+volatile int sin_table[sine_table_size];
+volatile int square_table[sine_table_size];
+volatile int triangle_table[sine_table_size];
+// Define note frequencies (Hz)
+#define NOTE_DO  263.0
+#define NOTE_RE  294.0
+#define NOTE_MI  330.0
+#define NOTE_FA  349.0
+#define NOTE_SOL 392.0
+#define NOTE_LA  440.0
+#define NOTE_SI  494.0
+#define NOTE_DO2 523.0
+#define NOTE_SILENT 0.0
+
+// Example song: cycle through three instruments
+Note song[] = {
+    {NOTE_MI, 400, INSTR_SINE},     // Sine
+    {NOTE_RE, 400, INSTR_SQUARE},   // Square
+    {NOTE_DO, 400, INSTR_TRIANGLE}, // Triangle
+    {NOTE_RE, 400, INSTR_SINE},
+    {NOTE_MI, 400, INSTR_SQUARE},
+    {NOTE_MI, 400, INSTR_TRIANGLE},
+    {NOTE_MI, 800, INSTR_SINE},
+    {NOTE_RE, 400, INSTR_SQUARE},
+    {NOTE_RE, 400, INSTR_TRIANGLE},
+    {NOTE_RE, 800, INSTR_SINE},
+    {NOTE_MI, 400, INSTR_SQUARE},
+    {NOTE_SOL, 400, INSTR_TRIANGLE},
+    {NOTE_SOL, 800, INSTR_SINE},
+    {NOTE_MI, 400, INSTR_SQUARE},
+    {NOTE_RE, 400, INSTR_TRIANGLE},
+    {NOTE_DO, 400, INSTR_SINE},
+    {NOTE_RE, 400, INSTR_SQUARE},
+    {NOTE_MI, 400, INSTR_TRIANGLE},
+    {NOTE_MI, 400, INSTR_SINE},
+    {NOTE_MI, 400, INSTR_SQUARE},
+    {NOTE_RE, 400, INSTR_TRIANGLE},
+    {NOTE_RE, 400, INSTR_SINE},
+    {NOTE_MI, 400, INSTR_SQUARE},
+    {NOTE_RE, 400, INSTR_TRIANGLE},
+    {NOTE_DO, 1200, INSTR_SINE}
+};
+const int song_length = sizeof(song) / sizeof(song[0]);
 // Alarm ISR
 static void alarm_irq(void)
 {
@@ -64,6 +120,12 @@ static void alarm_irq(void)
 
     // Perform an SPI transaction
     spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+
+    DAC_data = (DAC_config_chan_B | ((sin_table[phase_accum_main >> 24] + 2048) & 0xffff));
+
+    // Perform an SPI transaction
+    spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+
 
     // De-assert the GPIO when we leave the interrupt
     gpio_put(ISR_GPIO, 0);
@@ -91,53 +153,268 @@ void getgamepadstate()
             (gp.buttons & io::GamePadState::Button::START ? START : 0) |
             0;
     auto pushed = v & ~prevButtons;
+    auto released = prevButtons & ~v;
     if (pushed)
     {
-        if (pushed & A)
+        if (pushed & DOWN)
         {
-            phase_incr_main = (263.0 * two32) / Fs;  // DO
+            phase_incr_main = (263.0 * two32) / Fs; // DO
         }
-        else if (pushed & B)
+        else if (pushed & LEFT)
         {
-            phase_incr_main = (294.0 * two32) / Fs;  // RE
+            phase_incr_main = (294.0 * two32) / Fs; // RE
         }
         else if (pushed & UP)
         {
-            phase_incr_main = ( 330.0 * two32) / Fs;  // MI
+            phase_incr_main = (330.0 * two32) / Fs; // MI
         }
-        else if (pushed & DOWN)
+        else if (pushed & RIGHT)
         {
             phase_incr_main = (349.0 * two32) / Fs; // FA
         }
+        else if (pushed & SELECT)
+        {
+            phase_incr_main = (392.0 * two32) / Fs; // SOL
+        }
+        else if (pushed & START)
+        {
+            phase_incr_main = (440.0 * two32) / Fs; // LA
+        }
+        if (pushed & B)
+        {
+            phase_incr_main = (494.0 * two32) / Fs; // SI
+        }
+        else if (pushed & A)
+        {
+            phase_incr_main = (523.0 * two32) / Fs; // DO
+        }
     }
-    if (pushed & LEFT)
+    if (released)
     {
-        phase_incr_main = (392.0 * two32) / Fs; // SOL
-    }
-    else if (pushed & RIGHT)
-    {
-        phase_incr_main = (440.0 * two32) / Fs; // LA
-    }
-    if (pushed & SELECT)
-    {
-        phase_incr_main = (494.0 * two32) / Fs; // SI
-    }
-    else if (pushed & START)
-    {
-        phase_incr_main = (523.0 * two32) / Fs; // DO
-    } else {
         phase_incr_main = 0;
     }
-   
+    prevButtons = v;
     // if (pushed)
     // {
     //     printf("phase_incr_main = %f\n", phase_incr_main * Fs / two32);
     // }
 }
+
+
+// Song: Mary Had a Little Lamb (notes and durations in ms)
+
+#if false
+void play_song() {
+    for (int i = 0; i < song_length; ++i) {
+        if (song[i].freq > 0.0) {
+            phase_incr_main = (song[i].freq * two32) / Fs;
+        } else {
+            phase_incr_main = 0;
+        }
+        busy_wait_ms(song[i].duration);
+        phase_incr_main = 0; // Silence between notes
+        busy_wait_ms(50);
+    }
+}
+#endif
+
+void play_song() {
+    for (int i = 0; i < song_length; ++i) {
+        if (song[i].freq > 0.0) {
+            unsigned int phase_incr = (song[i].freq * two32) / Fs;
+            unsigned int phase_accum = 0;
+            int duration_samples = (Fs * song[i].duration) / 1000;
+            for (int j = 0; j < duration_samples; ++j) {
+                phase_accum += phase_incr;
+                int sample;
+                switch (song[i].instrument) {
+                    case INSTR_SINE:
+                        sample = sin_table[phase_accum >> 24];
+                        break;
+                    case INSTR_SQUARE:
+                        sample = square_table[phase_accum >> 24];
+                        break;
+                    case INSTR_TRIANGLE:
+                        sample = triangle_table[phase_accum >> 24];
+                        break;
+                    default:
+                        sample = 0;
+                }
+                DAC_data = (DAC_config_chan_A | ((sample + 2048) & 0xffff));
+                spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+                busy_wait_us(20); // 1/Fs = 20us
+            }
+        }
+        // Silence between notes
+        DAC_data = (DAC_config_chan_A | (2048 & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        busy_wait_ms(50);
+    }
+}
+
+void play_multitone(double freq1, Instrument inst1, double freq2, Instrument inst2, int duration_ms) {
+    unsigned int phase_accum1 = 0, phase_accum2 = 0;
+    unsigned int phase_incr1 = (freq1 * two32) / Fs;
+    unsigned int phase_incr2 = (freq2 * two32) / Fs;
+    int samples = (Fs * duration_ms) / 1000;
+    for (int i = 0; i < samples; ++i) {
+        phase_accum1 += phase_incr1;
+        phase_accum2 += phase_incr2;
+        int sample1, sample2;
+        switch (inst1) {
+            case INSTR_SINE: sample1 = sin_table[phase_accum1 >> 24]; break;
+            case INSTR_SQUARE: sample1 = square_table[phase_accum1 >> 24]; break;
+            case INSTR_TRIANGLE: sample1 = triangle_table[phase_accum1 >> 24]; break;
+            default: sample1 = 0;
+        }
+        switch (inst2) {
+            case INSTR_SINE: sample2 = sin_table[phase_accum2 >> 24]; break;
+            case INSTR_SQUARE: sample2 = square_table[phase_accum2 >> 24]; break;
+            case INSTR_TRIANGLE: sample2 = triangle_table[phase_accum2 >> 24]; break;
+            default: sample2 = 0;
+        }
+        // Average the two samples to avoid overflow
+        int sample = (sample1 + sample2) / 2;
+        DAC_data = (DAC_config_chan_A | ((sample + 2048) & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        busy_wait_us(20); // 1/Fs = 20us
+    }
+    // Silence after chord
+    DAC_data = (DAC_config_chan_A | (2048 & 0xffff));
+    spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+}
+
+void play_multitone_stereo(double freqL, Instrument instL, double freqR, Instrument instR, int duration_ms) {
+    unsigned int phase_accumL = 0, phase_accumR = 0;
+    unsigned int phase_incrL = (freqL * two32) / Fs;
+    unsigned int phase_incrR = (freqR * two32) / Fs;
+    int samples = (Fs * duration_ms) / 1000;
+    for (int i = 0; i < samples; ++i) {
+        phase_accumL += phase_incrL;
+        phase_accumR += phase_incrR;
+        int sampleL, sampleR;
+        switch (instL) {
+            case INSTR_SINE: sampleL = sin_table[phase_accumL >> 24]; break;
+            case INSTR_SQUARE: sampleL = square_table[phase_accumL >> 24]; break;
+            case INSTR_TRIANGLE: sampleL = triangle_table[phase_accumL >> 24]; break;
+            default: sampleL = 0;
+        }
+        switch (instR) {
+            case INSTR_SINE: sampleR = sin_table[phase_accumR >> 24]; break;
+            case INSTR_SQUARE: sampleR = square_table[phase_accumR >> 24]; break;
+            case INSTR_TRIANGLE: sampleR = triangle_table[phase_accumR >> 24]; break;
+            default: sampleR = 0;
+        }
+        // Output to both channels
+        DAC_data = (DAC_config_chan_A | ((sampleL + 2048) & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        DAC_data = (DAC_config_chan_B | ((sampleR + 2048) & 0xffff));
+        spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+        busy_wait_us(20); // 1/Fs = 20us
+    }
+    // Silence after chord
+    DAC_data = (DAC_config_chan_A | (2048 & 0xffff));
+    spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+    DAC_data = (DAC_config_chan_B | (2048 & 0xffff));
+    spi_write16_blocking(SPI_PORT, &DAC_data, 1);
+}
+
+void play_multitone_song() {
+    // Each entry: freq1, inst1, freq2, inst2, duration_ms
+    struct Chord {
+        double freq1;
+        Instrument inst1;
+        double freq2;
+        Instrument inst2;
+        int duration;
+    };
+    Chord chords[] = {
+        {NOTE_DO, INSTR_SINE, NOTE_MI, INSTR_SQUARE, 500},
+        {NOTE_FA, INSTR_TRIANGLE, NOTE_LA, INSTR_SINE, 500},
+        {NOTE_SOL, INSTR_SQUARE, NOTE_DO2, INSTR_TRIANGLE, 500},
+        {NOTE_MI, INSTR_SINE, NOTE_SI, INSTR_SQUARE, 700},
+        {NOTE_DO, INSTR_TRIANGLE, NOTE_SOL, INSTR_SINE, 1000}
+    };
+    int num_chords = sizeof(chords) / sizeof(chords[0]);
+    for (int i = 0; i < num_chords; ++i) {
+        play_multitone(
+            chords[i].freq1, chords[i].inst1,
+            chords[i].freq2, chords[i].inst2,
+            chords[i].duration
+        );
+        busy_wait_ms(100); // Short pause between chords
+    }
+}
+void play_stereo_song() {
+    // Each entry: left freq, left inst, right freq, right inst, duration_ms
+    struct StereoNote {
+        double freqL;
+        Instrument instL;
+        double freqR;
+        Instrument instR;
+        int duration;
+    };
+    StereoNote stereo_song[] = {
+        {NOTE_DO, INSTR_SINE, NOTE_MI, INSTR_SQUARE, 400},
+        {NOTE_RE, INSTR_TRIANGLE, NOTE_FA, INSTR_SINE, 400},
+        {NOTE_MI, INSTR_SQUARE, NOTE_SOL, INSTR_TRIANGLE, 400},
+        {NOTE_FA, INSTR_SINE, NOTE_LA, INSTR_SQUARE, 400},
+        {NOTE_SOL, INSTR_TRIANGLE, NOTE_SI, INSTR_SINE, 400},
+        {NOTE_LA, INSTR_SQUARE, NOTE_DO2, INSTR_TRIANGLE, 800}
+    };
+    int num_notes = sizeof(stereo_song) / sizeof(stereo_song[0]);
+    for (int i = 0; i < num_notes; ++i) {
+        play_multitone_stereo(
+            stereo_song[i].freqL, stereo_song[i].instL,
+            stereo_song[i].freqR, stereo_song[i].instR,
+            stereo_song[i].duration
+        );
+        busy_wait_ms(100); // Short pause between notes
+    }
+}
+void play_stereo_song_alt() {
+    // Define a melody to alternate
+    struct SimpleNote {
+        double freq;
+        Instrument inst;
+        int duration;
+    };
+    SimpleNote melody[] = {
+        {NOTE_DO, INSTR_SINE, 300},
+        {NOTE_RE, INSTR_SQUARE, 300},
+        {NOTE_MI, INSTR_TRIANGLE, 300},
+        {NOTE_FA, INSTR_SINE, 300},
+        {NOTE_SOL, INSTR_SQUARE, 300},
+        {NOTE_LA, INSTR_TRIANGLE, 300},
+        {NOTE_SI, INSTR_SINE, 300},
+        {NOTE_DO2, INSTR_SQUARE, 600}
+    };
+    int num_notes = sizeof(melody) / sizeof(melody[0]);
+    for (int i = 0; i < num_notes; ++i) {
+        if (i % 2 == 0) {
+            // Even index: play on left, silence on right
+            play_multitone_stereo(
+                melody[i].freq, melody[i].inst,
+                NOTE_SILENT, INSTR_SINE,
+                melody[i].duration
+            );
+        } else {
+            // Odd index: play on right, silence on left
+            play_multitone_stereo(
+                NOTE_SILENT, INSTR_SINE,
+                melody[i].freq, melody[i].inst,
+                melody[i].duration
+            );
+        }
+        busy_wait_ms(80); // Short pause between notes
+    }
+}
 int main()
 {
     stdio_init_all();
+    busy_wait_ms(1000);
     printf("Play Tones Demo\n");
+    printf("Init USB\n");
     tusb_init();
     // Initialize SPI channel (channel, baud rate set to 20MHz)
     spi_init(SPI_PORT, 20000000);
@@ -150,6 +427,11 @@ int main()
     gpio_set_dir(ISR_GPIO, GPIO_OUT);
     gpio_put(ISR_GPIO, 0);
 
+
+    gpio_init(LDAC_GPIO);
+    gpio_set_dir(LDAC_GPIO, GPIO_OUT);
+    gpio_put(LDAC_GPIO, 0);
+    
     // Map SPI signals to GPIO ports
     gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
     gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
@@ -159,11 +441,23 @@ int main()
     // === build the sine lookup table =======
     // scaled to produce values between 0 and 4096
     int ii;
-    for (ii = 0; ii < sine_table_size; ii++)
+   for (ii = 0; ii < sine_table_size; ii++)
     {
         sin_table[ii] = (int)(2047 * sin((float)ii * 6.283 / (float)sine_table_size));
+        square_table[ii] = (ii < sine_table_size / 2) ? 2047 : -2047;
+        // Triangle wave: ramps up and down linearly
+        if (ii < sine_table_size / 2)
+            triangle_table[ii] = (int)(-2047 + (ii * (4094.0 / (sine_table_size / 2))));
+        else
+            triangle_table[ii] = (int)(2047 - ((ii - sine_table_size / 2) * (4094.0 / (sine_table_size / 2))));
     }
+    play_stereo_song_alt();
+    //play_multitone_stereo(NOTE_DO, INSTR_SINE, NOTE_MI, INSTR_SQUARE, 1000);
+//     play_song();
+    //play_multitone(NOTE_DO, INSTR_SINE, NOTE_MI, INSTR_SQUARE, 1000);
+   
 
+#if true
     // Enable the interrupt for the alarm (we're using Alarm 0)
     hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM);
     // Associate an interrupt handler with the ALARM_IRQ
@@ -172,7 +466,7 @@ int main()
     irq_set_enabled(ALARM_IRQ, true);
     // Write the lower 32 bits of the target time to the alarm register, arming it.
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY;
-
+#endif
     // Nothing happening here
     while (1)
     {
